@@ -1,0 +1,16 @@
+---
+# Public defaults. Override deployment-specific settings in ignored vars/site.yml.
+NPM_IMAGE: jc21/nginx-proxy-manager:2.16.0
+NPM_BASE_PATH: /opt/nginx-proxy-manager
+
+# 'auto' binds to the target server's default-route IPv4 at deployment time.
+# Set a specific address in vars/site.yml on multi-NIC or unusual networks.
+# This setting is evaluated on the TARGET, not the Ansible controller.
+NPM_BIND_IP: auto
+
+# Reject accidental public-interface exposure unless explicitly approved.
+NPM_ALLOW_PUBLIC_BIND: false
+
+# NPM administration must stay loopback-only; use an SSH tunnel.
+NPM_ADMIN_BIND_IP: "127.0.0.1"
+NPM_TIMEZONE: Etc/UTC

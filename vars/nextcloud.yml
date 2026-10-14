@@ -1,13 +1,20 @@
 ---
-# Persistent configuration. Choose the data path before the first AIO setup.
+# Public defaults. Override deployment-specific settings in ignored vars/site.yml.
 NEXTCLOUD_BASE_PATH: /opt/nextcloud-aio
 NEXTCLOUD_DATADIR: /srv/nextcloud/data
 NEXTCLOUD_UPLOAD_LIMIT: 10G
 NEXTCLOUD_IMAGE: ghcr.io/nextcloud-releases/all-in-one:latest
 
-# Optional: require this path to be an actual mounted filesystem before deploy.
-# Example: /mnt/nextcloud-hdd (useful when the data is stored on a separate disk).
+# Optional filesystem mount guard, e.g. /mnt/nextcloud-hdd.
 NEXTCLOUD_DATA_MOUNTPOINT: ""
 
+# AIO needs these settings behind an NPM reverse proxy.
 NEXTCLOUD_APACHE_PORT: 11000
-NEXTCLOUD_APACHE_IP_BINDING: "0.0.0.0"
+NEXTCLOUD_PROXY_NETWORK: nextcloud-proxy
+NEXTCLOUD_APACHE_IP_BINDING: "127.0.0.1"
+
+# Only set true after arranging HTTPS and private DNS / DNS-01 validation.
+NEXTCLOUD_SKIP_DOMAIN_VALIDATION: false
+
+# Informational only: the domain is configured in the AIO and NPM web panels.
+NEXTCLOUD_DOMAIN: ""

@@ -1,0 +1,9 @@
+# Example usage (RFC 5737 - documentation-only address):
+# ansible-playbook -i '192.0.2.10,' -u username -K playbooks/deploy-remote-all.yml
+---
+# For clean servers without Docker. May modify APT configuration.
+- name: Install Docker, Nextcloud AIO and NPM remotely
+  ansible.builtin.import_playbook: install-all.yml
+  vars:
+    TARGET_HOSTS: all
+    TARGET_CONNECTION: ssh

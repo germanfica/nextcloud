@@ -3,7 +3,7 @@
 # Does not run the browser-based AIO setup or modify an existing AIO data dir.
 - name: Deploy Nextcloud AIO locally
   hosts: "{{ TARGET_HOSTS | default('localhost') }}"
-  connection: local
+  connection: "{{ TARGET_CONNECTION | default('local') }}"
   become: true
   gather_facts: true
 
@@ -15,6 +15,11 @@
     NEXTCLOUD_INSTALL_METADATA: "{{ NEXTCLOUD_BASE_PATH }}/.ansible-install.json"
 
   pre_tasks:
+    - name: Load optional, gitignored deployment overrides
+      ansible.builtin.include_vars:
+        file: "{{ playbook_dir }}/../vars/site.yml"
+      when: lookup('ansible.builtin.fileglob', playbook_dir ~ '/../vars/site.yml') | length > 0
+
     - name: Validate supported platform and deployment paths
       ansible.builtin.assert:
         that:
@@ -28,6 +33,12 @@
           - NEXTCLOUD_UPLOAD_LIMIT is match('^[1-9][0-9]*G$')
           - NEXTCLOUD_IMAGE is match('^ghcr\.io/nextcloud-releases/all-in-one:[A-Za-z0-9._-]+$')
           - NEXTCLOUD_DATA_MOUNTPOINT == '' or NEXTCLOUD_DATA_MOUNTPOINT is match('^/[^\s]+$')
+          - NEXTCLOUD_APACHE_PORT | int >= 1024
+          - NEXTCLOUD_APACHE_PORT | int <= 65535
+          - NEXTCLOUD_APACHE_IP_BINDING == '127.0.0.1'
+          - NEXTCLOUD_PROXY_NETWORK is match('^[a-zA-Z][a-zA-Z0-9_.-]{2,62}$')
+          - NEXTCLOUD_SKIP_DOMAIN_VALIDATION is boolean
+          - NEXTCLOUD_DOMAIN == '' or NEXTCLOUD_DOMAIN is match('^[A-Za-z0-9][A-Za-z0-9.-]*\.[A-Za-z]{2,63}$')
         fail_msg: 'Invalid platform or Nextcloud settings in vars/nextcloud.yml.'
 
     - name: Verify Docker Engine is available
@@ -86,6 +97,25 @@
       when: NEXTCLOUD_DATA_MOUNTPOINT | length > 0
 
   tasks:
+    - name: Check if the shared proxy Docker network already exists
+      ansible.builtin.command:
+        argv: [docker, network, inspect, "{{ NEXTCLOUD_PROXY_NETWORK }}", --format, "{{ '{{.Driver}}' }}"]
+      register: nextcloud_proxy_network_inspect
+      changed_when: false
+      failed_when: false
+
+    - name: Create the Docker bridge network before starting AIO
+      ansible.builtin.command:
+        argv: [docker, network, create, --driver, bridge, "{{ NEXTCLOUD_PROXY_NETWORK }}"]
+      when: nextcloud_proxy_network_inspect.rc != 0
+
+    - name: Reject an existing non-bridge network
+      ansible.builtin.assert:
+        that:
+          - nextcloud_proxy_network_inspect.stdout | trim == 'bridge'
+        fail_msg: 'Existing Docker proxy network must use the bridge driver.'
+      when: nextcloud_proxy_network_inspect.rc == 0
+
     - name: Create the persistent Nextcloud deployment directory
       ansible.builtin.file:
         path: "{{ NEXTCLOUD_BASE_PATH }}"
@@ -110,6 +140,7 @@
         owner: root
         group: root
         mode: '0640'
+        backup: true
       register: nextcloud_compose_render
 
     - name: Validate Nextcloud Docker Compose configuration
@@ -180,4 +211,7 @@
           - 'AIO mastercontainer is running; initial configuration is not completed.'
           - 'Admin URL from this server: https://127.0.0.1:8080'
           - 'From another machine, use SSH forwarding: ssh -L 8080:127.0.0.1:8080 USER@SERVER_IP'
-          - 'Nextcloud AIO itself needs a domain and HTTPS certificate; see README.md.'
+          - 'Configure the HTTPS domain in AIO and in the NPM web panel (see README.md).'
+          - 'Configured informational domain: {{ NEXTCLOUD_DOMAIN | default("not set", true) }}'
+          - 'NPM upstream: http://nextcloud-aio-apache:{{ NEXTCLOUD_APACHE_PORT }}'
+          - 'Skip AIO domain validation: {{ NEXTCLOUD_SKIP_DOMAIN_VALIDATION }}'

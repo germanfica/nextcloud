@@ -1,0 +1,7 @@
+---
+# Use when Docker is already installed (--skip-docker).
+- name: Deploy Nextcloud AIO
+  ansible.builtin.import_playbook: install-nextcloud.yml
+
+- name: Deploy local Nginx Proxy Manager
+  ansible.builtin.import_playbook: install-nginx-proxy-manager.yml

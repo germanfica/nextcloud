@@ -1,0 +1,184 @@
+---
+# Deploy NPM as a separate Compose project, reusing AIO's shared Docker network.
+# Does not automatically request certificates or create NPM proxy hosts.
+- name: Deploy local Nginx Proxy Manager
+  hosts: "{{ TARGET_HOSTS | default('localhost') }}"
+  connection: "{{ TARGET_CONNECTION | default('local') }}"
+  become: true
+  gather_facts: true
+
+  vars_files:
+    - "{{ playbook_dir }}/../vars/nextcloud.yml"
+    - "{{ playbook_dir }}/../vars/nginx-proxy-manager.yml"
+
+  vars:
+    NPM_COMPOSE_PATH: "{{ NPM_BASE_PATH }}/docker-compose.yml"
+    NPM_INSTALL_METADATA: "{{ NPM_BASE_PATH }}/.ansible-install.json"
+    NPM_EFFECTIVE_BIND_IP: >-
+      {{ ansible_facts.get('default_ipv4', {}).get('address', '')
+         if NPM_BIND_IP == 'auto' else NPM_BIND_IP }}
+
+  pre_tasks:
+    - name: Load optional, gitignored deployment overrides
+      ansible.builtin.include_vars:
+        file: "{{ playbook_dir }}/../vars/site.yml"
+      when: lookup('ansible.builtin.fileglob', playbook_dir ~ '/../vars/site.yml') | length > 0
+
+    - name: Validate local NPM settings
+      ansible.builtin.assert:
+        that:
+          - ansible_facts['distribution'] in ['Ubuntu', 'Debian']
+          - ansible_facts['architecture'] in ['x86_64', 'amd64', 'aarch64', 'arm64']
+          - NPM_BASE_PATH is match('^/[^\s]+$')
+          - NPM_BASE_PATH not in ['/', '/opt', '/srv', '/mnt']
+          - NPM_BASE_PATH != NEXTCLOUD_BASE_PATH
+          - NPM_BASE_PATH != NEXTCLOUD_DATADIR
+          - NPM_IMAGE is match('^jc21/nginx-proxy-manager:[0-9]+\.[0-9]+\.[0-9]+$')
+          - NPM_BIND_IP == 'auto' or NPM_BIND_IP is match('^[0-9.]+$')
+          - NPM_EFFECTIVE_BIND_IP | length > 0
+          - NPM_EFFECTIVE_BIND_IP == '127.0.0.1' or NPM_EFFECTIVE_BIND_IP in (ansible_facts['all_ipv4_addresses'] | default([]))
+          - NPM_ALLOW_PUBLIC_BIND is boolean
+          - >-
+            NPM_ALLOW_PUBLIC_BIND or
+            NPM_EFFECTIVE_BIND_IP is match('^(10\.|192\.168\.|172\.(1[6-9]|2[0-9]|3[01])\.|127\.)')
+          - NPM_ADMIN_BIND_IP == '127.0.0.1'
+          - NPM_TIMEZONE | length > 0
+        fail_msg: >-
+          The target does not own NPM_BIND_IP, has no detected default IPv4,
+          or the selected bind address is public. Review vars/site.yml, inspect
+          the server's IPv4 routing, and explicitly set NPM_ALLOW_PUBLIC_BIND
+          only if you intend public exposure and have network protections.
+
+    - name: Verify Docker Engine is available
+      ansible.builtin.command:
+        argv: [docker, info]
+      changed_when: false
+
+    - name: Verify Docker Compose plugin is available
+      ansible.builtin.command:
+        argv: [docker, compose, version]
+      changed_when: false
+
+    - name: Require the existing shared proxy network
+      ansible.builtin.command:
+        argv: [docker, network, inspect, "{{ NEXTCLOUD_PROXY_NETWORK }}", --format, "{{ '{{.Driver}}' }}"]
+      register: npm_proxy_network_inspect
+      changed_when: false
+      failed_when: false
+
+    - name: Confirm shared network is a Docker bridge
+      ansible.builtin.assert:
+        that:
+          - npm_proxy_network_inspect.rc == 0
+          - npm_proxy_network_inspect.stdout | trim == 'bridge'
+        fail_msg: 'Shared proxy network does not exist or is not a bridge. Run install-nextcloud.yml first.'
+
+    - name: Inspect existing NPM container
+      ansible.builtin.command:
+        argv: [docker, container, inspect, nextcloud-local-npm]
+      register: npm_existing_container
+      changed_when: false
+      failed_when: false
+
+    - name: Inspect Compose project ownership of existing NPM container
+      ansible.builtin.command:
+        argv:
+          - docker
+          - container
+          - inspect
+          - --format
+          - "{{ '{{index .Config.Labels `com.docker.compose.project`}}' }}"
+          - nextcloud-local-npm
+      register: npm_existing_compose_owner
+      changed_when: false
+      failed_when: false
+      when: npm_existing_container.rc == 0
+
+    - name: Inspect installer's NPM metadata
+      ansible.builtin.stat:
+        path: "{{ NPM_INSTALL_METADATA }}"
+      register: npm_metadata_stat
+
+    - name: Refuse to take over an unmanaged NPM container
+      ansible.builtin.assert:
+        that:
+          - npm_existing_container.rc != 0 or (npm_metadata_stat.stat.isreg | default(false) and npm_existing_compose_owner.stdout | default('') | trim == 'nextcloud-local-npm')
+        fail_msg: 'Container nextcloud-local-npm exists but was not created by this installer.'
+
+  tasks:
+    - name: Create NPM deployment directory
+      ansible.builtin.file:
+        path: "{{ NPM_BASE_PATH }}"
+        state: directory
+        owner: root
+        group: root
+        mode: '0750'
+
+    - name: Create persistent NPM state directories
+      ansible.builtin.file:
+        path: "{{ NPM_BASE_PATH }}/{{ item }}"
+        state: directory
+        owner: root
+        group: root
+        mode: '0750'
+      loop:
+        - data
+        - letsencrypt
+
+    - name: Render local NPM Docker Compose
+      ansible.builtin.template:
+        src: "{{ playbook_dir }}/../templates/nginx-proxy-manager-compose.yml.j2"
+        dest: "{{ NPM_COMPOSE_PATH }}"
+        owner: root
+        group: root
+        mode: '0640'
+        backup: true
+      register: npm_compose_render
+
+    - name: Validate local NPM Compose
+      ansible.builtin.command:
+        argv: [docker, compose, --file, "{{ NPM_COMPOSE_PATH }}", config, --quiet]
+        chdir: "{{ NPM_BASE_PATH }}"
+      changed_when: false
+
+    - name: Record NPM deployment marker before Compose up (safe retry after failure)
+      ansible.builtin.copy:
+        dest: "{{ NPM_INSTALL_METADATA }}"
+        owner: root
+        group: root
+        mode: '0640'
+        content: "{{ {'managed_by': 'install-nginx-proxy-manager.yml'} | to_nice_json }}\n"
+
+    - name: Start local NPM without deleting volumes or data
+      ansible.builtin.command:
+        argv:
+          - docker
+          - compose
+          - --file
+          - "{{ NPM_COMPOSE_PATH }}"
+          - up
+          - --detach
+          - --no-deps
+          - --pull
+          - missing
+        chdir: "{{ NPM_BASE_PATH }}"
+      register: npm_compose_up
+      changed_when: "'Started' in npm_compose_up.stderr or 'Created' in npm_compose_up.stderr or 'Recreated' in npm_compose_up.stderr"
+
+    - name: Confirm NPM is running
+      ansible.builtin.command:
+        argv: [docker, container, inspect, --format, "{{ '{{.State.Running}}' }}", nextcloud-local-npm]
+      register: npm_running
+      changed_when: false
+      retries: 20
+      delay: 3
+      until: npm_running.rc == 0 and npm_running.stdout | trim == 'true'
+
+    - name: Show the administration entry point
+      ansible.builtin.debug:
+        msg:
+          - 'NPM container is running; open its UI using an SSH tunnel.'
+          - 'SSH tunnel from a client: ssh -L 8181:127.0.0.1:81 USER@SERVER_IP'
+          - 'Open http://localhost:8181 and configure your DNS/ACME certificate.'
+          - 'HTTPS endpoint bound on the target: {{ NPM_EFFECTIVE_BIND_IP }}:443'
+          - 'Proxy host upstream: http://nextcloud-aio-apache:{{ NEXTCLOUD_APACHE_PORT }}'

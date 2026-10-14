@@ -1,0 +1,23 @@
+---
+# Copy to vars/site.yml (ignored by git) and adjust for your deployment.
+# NEXTCLOUD_DOMAIN is informational; configure the same DNS name in AIO and NPM.
+NEXTCLOUD_DOMAIN: cloud.example.com   # EXAMPLE ONLY; use a domain you control
+
+# Set a stable IPv4 on hosts with multiple interfaces, otherwise keep auto.
+NPM_BIND_IP: auto
+NPM_TIMEZONE: Etc/UTC
+
+# Private-only DNS-01 with a correctly configured HTTPS reverse proxy:
+NEXTCLOUD_SKIP_DOMAIN_VALIDATION: true
+
+# Only if you INTEND to expose the proxy on a public interface:
+# NPM_BIND_IP: "203.0.113.10"          # RFC 5737 example, NOT usable on a server
+# NPM_ALLOW_PUBLIC_BIND: true
+
+# Optional: specify your mounted data drive BEFORE first installation.
+# NEXTCLOUD_DATADIR: /mnt/nextcloud-hdd/nextcloud-data
+# NEXTCLOUD_DATA_MOUNTPOINT: /mnt/nextcloud-hdd
+
+# Optional: only for a fresh Docker install; the docker group gives root-equivalent access.
+# DOCKER_ADD_USER_TO_GROUP: true
+# DOCKER_USER: username

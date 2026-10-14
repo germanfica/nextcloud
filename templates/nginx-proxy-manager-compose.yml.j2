@@ -1,0 +1,35 @@
+# Managed by Ansible: playbooks/install-nginx-proxy-manager.yml.
+# Separate Compose project; state in the configured NPM_BASE_PATH.
+name: nextcloud-local-npm
+
+services:
+  npm:
+    image: {{ NPM_IMAGE | to_json }}
+    container_name: nextcloud-local-npm
+    restart: unless-stopped
+
+    ports:
+      - {{ (NPM_EFFECTIVE_BIND_IP ~ ':80:80') | to_json }}
+      - {{ (NPM_ADMIN_BIND_IP ~ ':81:81') | to_json }}
+      - {{ (NPM_EFFECTIVE_BIND_IP ~ ':443:443') | to_json }}
+
+    environment:
+      TZ: {{ NPM_TIMEZONE | to_json }}
+
+    volumes:
+      - {{ (NPM_BASE_PATH ~ '/data:/data') | to_json }}
+      - {{ (NPM_BASE_PATH ~ '/letsencrypt:/etc/letsencrypt') | to_json }}
+
+    networks:
+      - proxy
+
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"
+
+networks:
+  proxy:
+    external: true
+    name: {{ NEXTCLOUD_PROXY_NETWORK | to_json }}

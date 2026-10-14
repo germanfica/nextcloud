@@ -1,5 +1,5 @@
 #!/bin/sh
-# Deploy Nextcloud AIO on the local machine using Ansible.
+# Deploy Nextcloud AIO and local Nginx Proxy Manager using Ansible.
 set -eu
 
 ProjectDir=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd -P)
@@ -10,9 +10,9 @@ Usage() {
   cat <<'USAGE'
 Usage: ./install.sh [--skip-docker] [--no-ask-become-pass] [--help]
 
-Deploy Nextcloud AIO on the local Ubuntu/Debian host.
+Deploy Nextcloud AIO and Nginx Proxy Manager on the local Ubuntu/Debian host.
 By default, install Docker Engine and the Compose plugin using
-playbooks/install-docker.yml before deploying Nextcloud AIO.
+playbooks/install-docker.yml before deploying Nextcloud AIO and NPM.
 
 Options:
   --skip-docker           Do not run install-docker.yml (Docker already installed).
@@ -50,7 +50,7 @@ fi
 if [ "$InstallDocker" = true ]; then
   Playbook="$ProjectDir/playbooks/install-all.yml"
 else
-  Playbook="$ProjectDir/playbooks/install-nextcloud.yml"
+  Playbook="$ProjectDir/playbooks/install-services.yml"
 fi
 
 # Use a local-only inventory. Restrict the target even if ansible.cfg exists.
