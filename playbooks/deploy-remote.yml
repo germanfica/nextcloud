@@ -1,0 +1,117 @@
+
+---
+- name: Deploy Nextcloud project to Ubuntu Server
+  hosts: all
+  gather_facts: true
+  become: false
+
+  vars:
+    local_project: "{{ playbook_dir | dirname }}"
+    local_archive: "{{ local_project | dirname }}/nextcloud.tar.xz"
+
+    remote_home: "{{ ansible_facts.user_dir }}"
+    remote_project: "{{ remote_home }}/nextcloud"
+    remote_archive: "{{ remote_home }}/nextcloud.tar.xz"
+    incoming_archive: "{{ remote_home }}/.nextcloud.tar.xz.incoming"
+
+    ansible_python_interpreter: /usr/bin/python3
+
+  vars_prompt:
+    - name: sudo_password
+      prompt: "Contraseña sudo del servidor"
+      private: true
+
+  tasks:
+    - name: Verify local installer exists
+      ansible.builtin.stat:
+        path: "{{ local_project }}/install.sh"
+      delegate_to: localhost
+      register: local_installer
+
+    - name: Stop if local installer is missing
+      ansible.builtin.assert:
+        that:
+          - local_installer.stat.isreg | default(false)
+        fail_msg: "No se encontró {{ local_project }}/install.sh"
+
+    - name: Create local nextcloud.tar.xz
+      ansible.builtin.command:
+        argv:
+          - tar
+          - -cJf
+          - "{{ local_archive }}"
+          - -C
+          - "{{ local_project | dirname }}"
+          - "{{ local_project | basename }}"
+      delegate_to: localhost
+
+    - name: Verify local archive
+      ansible.builtin.command:
+        argv:
+          - tar
+          - -tJf
+          - "{{ local_archive }}"
+      delegate_to: localhost
+      changed_when: false
+
+    - name: Install dependencies for extraction and interactive installer
+      ansible.builtin.apt:
+        name:
+          - xz-utils
+          - python3-pexpect
+        state: present
+      become: true
+      vars:
+        ansible_become_password: "{{ sudo_password }}"
+
+    - name: Upload archive to temporary remote path
+      ansible.builtin.copy:
+        src: "{{ local_archive }}"
+        dest: "{{ incoming_archive }}"
+        mode: "0600"
+
+    - name: Verify uploaded archive
+      ansible.builtin.command:
+        argv:
+          - tar
+          - -tJf
+          - "{{ incoming_archive }}"
+      changed_when: false
+
+    - name: Delete old remote source directory and archive
+      ansible.builtin.file:
+        path: "{{ item }}"
+        state: absent
+      loop:
+        - "{{ remote_project }}"
+        - "{{ remote_archive }}"
+
+    - name: Move verified uploaded archive into place
+      ansible.builtin.command:
+        argv:
+          - mv
+          - --
+          - "{{ incoming_archive }}"
+          - "{{ remote_archive }}"
+
+    - name: Extract project in remote home
+      ansible.builtin.unarchive:
+        src: "{{ remote_archive }}"
+        dest: "{{ remote_home }}"
+        remote_src: true
+
+    - name: Run install.sh --skip-docker on remote host
+      ansible.builtin.expect:
+        command: ./install.sh --skip-docker
+        chdir: "{{ remote_project }}"
+        responses:
+          '(?i)(?:BECOME|SUDO) password:': "{{ sudo_password }}"
+        timeout: 3600
+        echo: false
+      register: installation_result
+      no_log: true
+
+    - name: Remove remote archive after successful install
+      ansible.builtin.file:
+        path: "{{ remote_archive }}"
+        state: absent
