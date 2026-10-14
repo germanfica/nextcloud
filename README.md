@@ -1,6 +1,6 @@
 # Nextcloud AIO + Nginx Proxy Manager (Ansible)
 
-An Ubuntu/Debian installer for **Nextcloud All-in-One (AIO)** and **Nginx Proxy Manager (NPM)**, using Docker Compose. Supports a local machine, a QEMU/KVM VM, a remote server over SSH, and multi-host Ansible inventories.
+An Ubuntu/Debian installer for **Nextcloud All-in-One (AIO)** and **Nginx Proxy Manager (NPM)**, using Docker Compose. Supports local installations, virtual machines, remote servers over SSH, and multi-host Ansible inventories.
 
 **Scope:** Ansible installs/configures the AIO mastercontainer and NPM. You must finish Nextcloud's first-time setup, issue a trusted TLS certificate, and create the NPM proxy host through their respective web UIs. This project does not automatically configure DNS, firewall rules, routers, backups, ACME accounts, or the Nextcloud application.
 
@@ -56,7 +56,7 @@ If Docker already works on the target, **skip the Docker installer**; the Docker
 
 ## Configuration: no hardcoded server IP
 
-The default `NPM_BIND_IP: auto` selects `ansible_facts.default_ipv4.address` **on each target machine**. This is the target's IPv4 used for its default route, not the IP of your Ansible controller. A QEMU/KVM guest with a libvirt NAT interface usually selects the guest's private address; a server with multiple NICs may need a manual override. A dynamically assigned IP can change; reserve DHCP/static addressing and update private DNS where appropriate.
+The default `NPM_BIND_IP: auto` selects `ansible_facts.default_ipv4.address` **on each target machine**. This is the target's IPv4 used for its default route, not the IP of your Ansible controller. Virtual machines using NAT networking typically select their private guest address; hosts with multiple network interfaces may need a manual override. A dynamically assigned IP can change; reserve DHCP/static addressing and update private DNS where appropriate.
 
 By default the playbook **refuses to publish NPM web ports on a public IPv4 address**. To intentionally use a public interface, explicitly configure `NPM_BIND_IP` and `NPM_ALLOW_PUBLIC_BIND: true`, and secure your network/firewall first. It **never** publishes the NPM admin panel on a non-loopback address.
 
@@ -90,7 +90,7 @@ NEXTCLOUD_DATA_MOUNTPOINT: /mnt/nextcloud-hdd
 
 Ansible checks that the configured mount exists and refuses to silently change the data directory after deployment. The default storage is `/srv/nextcloud/data` on the **target OS** (not necessarily the physical hypervisor).
 
-## Install locally (including a VM console)
+## Install locally (physical or virtual machine)
 
 On the machine where Nextcloud will run:
 
