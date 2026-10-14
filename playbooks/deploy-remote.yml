@@ -1,4 +1,5 @@
-
+# Example usage (RFC 5737):
+# ansible-playbook -i '192.0.2.10,' -u username playbooks/deploy-remote.yml
 ---
 - name: Deploy Nextcloud project to Ubuntu Server
   hosts: all
