@@ -1,0 +1,7 @@
+---
+# Local entry point. Reuse the existing Docker installation playbook.
+- name: Install Docker Engine and Compose
+  ansible.builtin.import_playbook: install-docker.yml
+
+- name: Deploy Nextcloud AIO
+  ansible.builtin.import_playbook: install-nextcloud.yml

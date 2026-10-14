@@ -1,0 +1,33 @@
+# Managed by Ansible: playbooks/install-nextcloud.yml.
+# Do not change the mastercontainer or volume names: AIO requires them.
+name: nextcloud-aio
+
+services:
+  nextcloud-aio-mastercontainer:
+    image: {{ NEXTCLOUD_IMAGE | to_json }}
+    container_name: nextcloud-aio-mastercontainer
+    init: true
+    restart: always
+    network_mode: bridge
+
+    ports:
+      - "80:80"
+      - "127.0.0.1:8080:8080"
+
+    environment:
+      NEXTCLOUD_DATADIR: {{ NEXTCLOUD_DATADIR | to_json }}
+      NEXTCLOUD_UPLOAD_LIMIT: {{ NEXTCLOUD_UPLOAD_LIMIT | to_json }}
+
+    volumes:
+      - nextcloud_aio_mastercontainer:/mnt/docker-aio-config
+      - /var/run/docker.sock:/var/run/docker.sock:ro
+
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"
+
+volumes:
+  nextcloud_aio_mastercontainer:
+    name: nextcloud_aio_mastercontainer

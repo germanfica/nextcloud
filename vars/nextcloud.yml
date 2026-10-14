@@ -1,0 +1,10 @@
+---
+# Persistent configuration. Choose the data path before the first AIO setup.
+NEXTCLOUD_BASE_PATH: /opt/nextcloud-aio
+NEXTCLOUD_DATADIR: /srv/nextcloud/data
+NEXTCLOUD_UPLOAD_LIMIT: 10G
+NEXTCLOUD_IMAGE: ghcr.io/nextcloud-releases/all-in-one:latest
+
+# Optional: require this path to be an actual mounted filesystem before deploy.
+# Example: /mnt/nextcloud-hdd (useful when the data is stored on a separate disk).
+NEXTCLOUD_DATA_MOUNTPOINT: ""

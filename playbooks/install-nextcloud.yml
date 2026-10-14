@@ -1,0 +1,183 @@
+---
+# Deploy an official Nextcloud AIO mastercontainer on the local host.
+# Does not run the browser-based AIO setup or modify an existing AIO data dir.
+- name: Deploy Nextcloud AIO locally
+  hosts: "{{ TARGET_HOSTS | default('localhost') }}"
+  connection: local
+  become: true
+  gather_facts: true
+
+  vars_files:
+    - "{{ playbook_dir }}/../vars/nextcloud.yml"
+
+  vars:
+    NEXTCLOUD_COMPOSE_PATH: "{{ NEXTCLOUD_BASE_PATH }}/docker-compose.yml"
+    NEXTCLOUD_INSTALL_METADATA: "{{ NEXTCLOUD_BASE_PATH }}/.ansible-install.json"
+
+  pre_tasks:
+    - name: Validate supported platform and deployment paths
+      ansible.builtin.assert:
+        that:
+          - ansible_facts['distribution'] in ['Ubuntu', 'Debian']
+          - ansible_facts['architecture'] in ['x86_64', 'amd64', 'aarch64', 'arm64']
+          - NEXTCLOUD_BASE_PATH is match('^/[^\s]+$')
+          - NEXTCLOUD_DATADIR is match('^/[^\s]+$')
+          - NEXTCLOUD_BASE_PATH not in ['/', '/opt', '/srv', '/mnt']
+          - NEXTCLOUD_DATADIR not in ['/', '/opt', '/srv', '/mnt']
+          - NEXTCLOUD_DATADIR != NEXTCLOUD_BASE_PATH
+          - NEXTCLOUD_UPLOAD_LIMIT is match('^[1-9][0-9]*G$')
+          - NEXTCLOUD_IMAGE is match('^ghcr\.io/nextcloud-releases/all-in-one:[A-Za-z0-9._-]+$')
+          - NEXTCLOUD_DATA_MOUNTPOINT == '' or NEXTCLOUD_DATA_MOUNTPOINT is match('^/[^\s]+$')
+        fail_msg: 'Invalid platform or Nextcloud settings in vars/nextcloud.yml.'
+
+    - name: Verify Docker Engine is available
+      ansible.builtin.command:
+        argv: [docker, info]
+      changed_when: false
+
+    - name: Verify Docker Compose plugin is available
+      ansible.builtin.command:
+        argv: [docker, compose, version]
+      changed_when: false
+
+    - name: Inspect existing AIO mastercontainer
+      ansible.builtin.command:
+        argv:
+          - docker
+          - container
+          - inspect
+          - nextcloud-aio-mastercontainer
+      register: nextcloud_existing_container
+      changed_when: false
+      failed_when: false
+
+    - name: Inspect installer's metadata
+      ansible.builtin.stat:
+        path: "{{ NEXTCLOUD_INSTALL_METADATA }}"
+      register: nextcloud_metadata_stat
+
+    - name: Refuse to take over an unmanaged AIO container
+      ansible.builtin.assert:
+        that:
+          - nextcloud_existing_container.rc != 0 or nextcloud_metadata_stat.stat.isreg | default(false)
+        fail_msg: >-
+          An AIO mastercontainer already exists but is not managed by this installer.
+          Do not overwrite it; use its existing Compose project or migrate it explicitly.
+
+    - name: Read previous deployment settings when available
+      ansible.builtin.slurp:
+        src: "{{ NEXTCLOUD_INSTALL_METADATA }}"
+      register: nextcloud_previous_metadata
+      when: nextcloud_metadata_stat.stat.isreg | default(false)
+
+    - name: Prevent changing the existing data directory
+      ansible.builtin.assert:
+        that:
+          - (nextcloud_previous_metadata.content | b64decode | from_json).datadir == NEXTCLOUD_DATADIR
+        fail_msg: >-
+          NEXTCLOUD_DATADIR differs from the first deployment. AIO does not support
+          changing this variable in place. Migrate the data using AIO's documentation.
+      when: nextcloud_metadata_stat.stat.isreg | default(false)
+
+    - name: Verify selected storage is mounted when required
+      ansible.builtin.command:
+        argv: [mountpoint, --quiet, "{{ NEXTCLOUD_DATA_MOUNTPOINT }}"]
+      changed_when: false
+      when: NEXTCLOUD_DATA_MOUNTPOINT | length > 0
+
+  tasks:
+    - name: Create the persistent Nextcloud deployment directory
+      ansible.builtin.file:
+        path: "{{ NEXTCLOUD_BASE_PATH }}"
+        state: directory
+        owner: root
+        group: root
+        mode: '0750'
+
+    - name: Create the parent directory of the Nextcloud data directory
+      ansible.builtin.file:
+        path: "{{ NEXTCLOUD_DATADIR | dirname }}"
+        state: directory
+        owner: root
+        group: root
+        mode: '0755'
+      # AIO creates and manages the data directory itself. Do not chown it.
+
+    - name: Render the Nextcloud AIO Compose configuration
+      ansible.builtin.template:
+        src: "{{ playbook_dir }}/../templates/docker-compose.yml.j2"
+        dest: "{{ NEXTCLOUD_COMPOSE_PATH }}"
+        owner: root
+        group: root
+        mode: '0640'
+      register: nextcloud_compose_render
+
+    - name: Validate Nextcloud Docker Compose configuration
+      ansible.builtin.command:
+        argv: [docker, compose, --file, "{{ NEXTCLOUD_COMPOSE_PATH }}", config, --quiet]
+        chdir: "{{ NEXTCLOUD_BASE_PATH }}"
+      changed_when: false
+
+    - name: Record managed deployment settings
+      ansible.builtin.copy:
+        dest: "{{ NEXTCLOUD_INSTALL_METADATA }}"
+        owner: root
+        group: root
+        mode: '0640'
+        content: "{{ {'datadir': NEXTCLOUD_DATADIR} | to_nice_json }}\n"
+
+    - name: Inspect running state of AIO mastercontainer
+      ansible.builtin.command:
+        argv:
+          - docker
+          - container
+          - inspect
+          - --format
+          - "{{ '{{.State.Running}}' }}"
+          - nextcloud-aio-mastercontainer
+      register: nextcloud_before_up
+      changed_when: false
+      failed_when: false
+
+    - name: Start AIO mastercontainer without destroying volumes
+      ansible.builtin.command:
+        argv:
+          - docker
+          - compose
+          - --file
+          - "{{ NEXTCLOUD_COMPOSE_PATH }}"
+          - up
+          - --detach
+          - --no-deps
+          - --pull
+          - missing
+          - nextcloud-aio-mastercontainer
+        chdir: "{{ NEXTCLOUD_BASE_PATH }}"
+      when: >-
+        nextcloud_compose_render.changed or
+        nextcloud_before_up.rc != 0 or
+        nextcloud_before_up.stdout | trim != 'true'
+      register: nextcloud_compose_up
+
+    - name: Confirm AIO mastercontainer is running
+      ansible.builtin.command:
+        argv:
+          - docker
+          - container
+          - inspect
+          - --format
+          - "{{ '{{.State.Running}}' }}"
+          - nextcloud-aio-mastercontainer
+      register: nextcloud_running
+      changed_when: false
+      retries: 10
+      delay: 3
+      until: nextcloud_running.rc == 0 and nextcloud_running.stdout | trim == 'true'
+
+    - name: Show the local AIO administration entry point
+      ansible.builtin.debug:
+        msg:
+          - 'AIO mastercontainer is running; initial configuration is not completed.'
+          - 'Admin URL from this server: https://127.0.0.1:8080'
+          - 'From another machine, use SSH forwarding: ssh -L 8080:127.0.0.1:8080 USER@SERVER_IP'
+          - 'Nextcloud AIO itself needs a domain and HTTPS certificate; see README.md.'
