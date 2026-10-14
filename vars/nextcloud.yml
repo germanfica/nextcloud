@@ -8,3 +8,6 @@ NEXTCLOUD_IMAGE: ghcr.io/nextcloud-releases/all-in-one:latest
 # Optional: require this path to be an actual mounted filesystem before deploy.
 # Example: /mnt/nextcloud-hdd (useful when the data is stored on a separate disk).
 NEXTCLOUD_DATA_MOUNTPOINT: ""
+
+NEXTCLOUD_APACHE_PORT: 11000
+NEXTCLOUD_APACHE_IP_BINDING: "0.0.0.0"
